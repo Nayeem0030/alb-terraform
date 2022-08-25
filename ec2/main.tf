@@ -2,62 +2,95 @@ provider "aws" {
   region = "us-west-2"
 }
 
-data "aws_availability_zones" "available" {}
-
-data "aws_ami" "centos" {
-  owners      = ["679593333241"]
-  most_recent = true
-
-  filter {
-    name   = "name"
-    values = ["CentOS Linux 7 x86_64 HVM EBS *"]
+resource "aws_lb_target_group" "my-target-group" {
+  health_check {
+    interval            = 10
+    path                = "/"
+    protocol            = "HTTP"
+    timeout             = 5
+    healthy_threshold   = 5
+    unhealthy_threshold = 2
   }
 
-  filter {
-    name   = "architecture"
-    values = ["x86_64"]
-  }
-
-  filter {
-    name   = "root-device-type"
-    values = ["ebs"]
-  }
+  name        = "my-test-tg"
+  port        = 80
+  protocol    = "HTTP"
+  target_type = "instance"
+  vpc_id      = "${var.vpc_id}"
 }
 
-resource "aws_key_pair" "mytest-key" {
-  key_name   = "my-test-terraform-key-new1"
-  public_key = "${file(var.my_public_key)}"
+/*resource "aws_lb_target_group_attachment" "my-alb-target-group-attachment1" {
+  target_group_arn = "${aws_lb_target_group.my-target-group.arn}"
+  target_id        = "${var.instance1_id}"
+  port             = 80
 }
 
-data "template_file" "init" {
-  template = "${file("${path.module}/userdata.tpl")}"
-}
+resource "aws_lb_target_group_attachment" "my-alb-target-group-attachment2" {
+  target_group_arn = "${aws_lb_target_group.my-target-group.arn}"
+  target_id        = "${var.instance2_id}"
+  port             = 80
+}*/
 
-resource "aws_instance" "my-test-instance" {
-  count                  = 2
-  ami                    = "${data.aws_ami.centos.id}"
-  instance_type          = "${var.instance_type}"
-  key_name               = "${aws_key_pair.mytest-key.id}"
-  vpc_security_group_ids = ["${var.security_group}"]
-  subnet_id              = "${element(var.subnets, count.index )}"
-  user_data              = "${data.template_file.init.rendered}"
+resource "aws_lb" "my-aws-alb" {
+  name     = "my-test-alb"
+  internal = false
+
+  security_groups = [
+    "${aws_security_group.my-alb-sg.id}",
+  ]
+
+  subnets = [
+    "${var.subnet1}",
+    "${var.subnet2}",
+  ]
 
   tags = {
-    Name = "my-instance-${count.index + 1}"
+    Name = "my-test-alb"
+  }
+
+  ip_address_type    = "ipv4"
+  load_balancer_type = "application"
+}
+
+resource "aws_lb_listener" "my-test-alb-listner" {
+  load_balancer_arn = "${aws_lb.my-aws-alb.arn}"
+  port              = 80
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = "${aws_lb_target_group.my-target-group.arn}"
   }
 }
 
-resource "aws_ebs_volume" "my-test-ebs" {
-  count             = 2
-  availability_zone = "${data.aws_availability_zones.available.names[count.index]}"
-  size              = 1
-  type              = "gp2"
+resource "aws_security_group" "my-alb-sg" {
+  name   = "my-alb-sg"
+  vpc_id = "${var.vpc_id}"
 }
 
-resource "aws_volume_attachment" "my-vol-attach" {
-  count        = 2
-  device_name  = "/dev/xvdh"
-  instance_id  = "${aws_instance.my-test-instance.*.id[count.index]}"
-  volume_id    = "${aws_ebs_volume.my-test-ebs.*.id[count.index]}"
-  force_detach = true
+resource "aws_security_group_rule" "inbound_ssh" {
+  from_port         = 22
+  protocol          = "tcp"
+  security_group_id = "${aws_security_group.my-alb-sg.id}"
+  to_port           = 22
+  type              = "ingress"
+  cidr_blocks       = ["0.0.0.0/0"]
+}
+
+resource "aws_security_group_rule" "inbound_http" {
+  from_port         = 80
+  protocol          = "tcp"
+  security_group_id = "${aws_security_group.my-alb-sg.id}"
+  to_port           = 80
+  type              = "ingress"
+  cidr_blocks       = ["0.0.0.0/0"]
+}
+
+resource "aws_security_group_rule" "outbound_all" {
+  from_port         = 0
+  protocol          = "-1"
+  security_group_id = "${aws_security_group.my-alb-sg.id}"
+  to_port           = 0
+  type              = "egress"
+  cidr_blocks       = ["0.0.0.0/0"]
 }
