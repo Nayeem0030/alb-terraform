@@ -39,11 +39,11 @@ resource "aws_lb" "my-aws-alb" {
     "${aws_security_group.my-alb-sg.id}",
   ]
 
-  subnets = [
+  */subnets = [
     "${var.subnet1}",
     "${var.subnet2}",
   ]
-
+/*
   tags = {
     Name = "my-test-alb"
   }
